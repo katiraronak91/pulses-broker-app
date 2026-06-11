@@ -259,6 +259,8 @@ function BrokerDesk({ session }) {
   const [trade, setTrade] = useState(emptyTrade(1, 5));
   const [savedTrade, setSavedTrade] = useState(null);
   const [editingTradeId, setEditingTradeId] = useState(null);
+  const [tradeSearch, setTradeSearch] = useState("");
+  const [tradeMonth, setTradeMonth] = useState("");
   const [toast, setToast] = useState("");
   const [syncState, setSyncState] = useState("ok"); // ok | saving | error
   const saveTimer = useRef(null);
@@ -659,34 +661,81 @@ function BrokerDesk({ session }) {
         )}
 
         {/* ============ TRADES LIST ============ */}
-        {tab === "trades" && (
-          <div>
-            {trades.length === 0 && <Empty text="No trades yet. Your saved trades will appear here as a ledger." />}
-            {trades.map((t) => {
-              const tc = calcTrade(t, contacts);
+        {tab === "trades" && (() => {
+          const months = [...new Set(trades.map((t) => (t.date || "").slice(0, 7)).filter(Boolean))].sort().reverse();
+          const monthLabel = (m) => {
+            const [y, mo] = m.split("-");
+            return new Date(Number(y), Number(mo) - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+          };
+          const q = tradeSearch.trim().toLowerCase();
+          const filtered = trades
+            .filter((t) => {
+              if (tradeMonth && !(t.date || "").startsWith(tradeMonth)) return false;
+              if (!q) return true;
+              const buyer = contacts.find((c) => c.id === t.buyerId)?.name || "";
+              const seller = contacts.find((c) => c.id === t.sellerId)?.name || "";
               return (
-                <div key={t.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <div style={{ fontWeight: 800 }}>#{t.tradeNo} · {t.product}{t.quality ? ` – ${t.quality}` : ""}</div>
-                    <div style={{ fontSize: 12, color: C.grey }}>{t.date}</div>
-                  </div>
-                  <div style={{ fontSize: 13.5, marginTop: 4, color: C.ink }}>
-                    {tc.seller?.name || "—"} → {tc.buyer?.name || "—"} · {t.qtyMT} MT ({fmt(tc.bags)} bags)
-                  </div>
-                  <div style={{ fontSize: 13, color: C.grey }}>{deliveryText(t)}{t.deliveryFrom ? ` · From ${t.deliveryFrom}` : ""} · Sell ₹{t.sellerPrice} / Buy ₹{t.buyerPrice} per 100kg</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                    <div style={{ fontWeight: 800, color: C.green }}>{rupee(tc.total)}</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Btn small outline onClick={() => startEditTrade(t)}>✏️</Btn>
-                      <Btn small color={C.wa} onClick={() => setSavedTrade(t)}>WhatsApp</Btn>
-                      <Btn small outline color={C.red} onClick={() => { if (window.confirm("Delete trade #" + t.tradeNo + "?")) deleteTrade(t.id); }}>Delete</Btn>
+                buyer.toLowerCase().includes(q) ||
+                seller.toLowerCase().includes(q) ||
+                (t.product || "").toLowerCase().includes(q) ||
+                (t.quality || "").toLowerCase().includes(q) ||
+                String(t.tradeNo).toLowerCase().includes(q)
+              );
+            })
+            .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
+          const filteredEarnings = filtered.reduce((s, t) => s + calcTrade(t, contacts).total, 0);
+          const filteredMT = filtered.reduce((s, t) => s + (Number(t.qtyMT) || 0), 0);
+          return (
+            <div>
+              {/* Search + month filter */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <input
+                  style={{ ...inputStyle, flex: 1.4 }}
+                  value={tradeSearch}
+                  onChange={(e) => setTradeSearch(e.target.value)}
+                  placeholder="🔍 Search party, product, trade no…"
+                />
+                <select style={{ ...inputStyle, flex: 1 }} value={tradeMonth} onChange={(e) => setTradeMonth(e.target.value)}>
+                  <option value="">All months</option>
+                  {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                </select>
+              </div>
+              {(tradeSearch || tradeMonth) && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.toorSoft, border: `1.5px solid ${C.toor}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12, fontSize: 13 }}>
+                  <span style={{ fontWeight: 700 }}>
+                    {filtered.length} trade{filtered.length !== 1 ? "s" : ""} · {fmt(filteredMT)} MT · Earned {rupee(filteredEarnings)}
+                  </span>
+                  <button onClick={() => { setTradeSearch(""); setTradeMonth(""); }} style={{ border: "none", background: "transparent", color: C.maroon, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>✕ Clear</button>
+                </div>
+              )}
+              {trades.length === 0 && <Empty text="No trades yet. Your saved trades will appear here as a ledger." />}
+              {trades.length > 0 && filtered.length === 0 && <Empty text="No trades match your search." />}
+              {filtered.map((t) => {
+                const tc = calcTrade(t, contacts);
+                return (
+                  <div key={t.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <div style={{ fontWeight: 800 }}>#{t.tradeNo} · {t.product}{t.quality ? ` – ${t.quality}` : ""}</div>
+                      <div style={{ fontSize: 12, color: C.grey }}>{t.date}</div>
+                    </div>
+                    <div style={{ fontSize: 13.5, marginTop: 4, color: C.ink }}>
+                      {tc.seller?.name || "—"} → {tc.buyer?.name || "—"} · {t.qtyMT} MT ({fmt(tc.bags)} bags)
+                    </div>
+                    <div style={{ fontSize: 13, color: C.grey }}>{deliveryText(t)}{t.deliveryFrom ? ` · From ${t.deliveryFrom}` : ""} · Sell ₹{t.sellerPrice} / Buy ₹{t.buyerPrice} per 100kg</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                      <div style={{ fontWeight: 800, color: C.green }}>{rupee(tc.total)}</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Btn small outline onClick={() => startEditTrade(t)}>✏️</Btn>
+                        <Btn small color={C.wa} onClick={() => setSavedTrade(t)}>WhatsApp</Btn>
+                        <Btn small outline color={C.red} onClick={() => { if (window.confirm("Delete trade #" + t.tradeNo + "?")) deleteTrade(t.id); }}>Delete</Btn>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* ============ POSITION / P&L ============ */}
         {tab === "position" && (
@@ -695,10 +744,12 @@ function BrokerDesk({ session }) {
             {computePositions(trades, contacts).map(({ contact, rows, totalPL }) => (
               <div key={contact.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ fontWeight: 800 }}>
+                  <button onClick={() => { setTradeSearch(contact.name); setTradeMonth(""); setTab("trades"); }}
+                    style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontWeight: 800, fontSize: 15, color: C.maroon, textAlign: "left" }}>
                     {contact.name}{" "}
-                    <span style={{ fontSize: 11, background: contact.type === "Broker" ? C.toorSoft : "#E8F3EC", padding: "2px 6px", borderRadius: 6 }}>{contact.type.toUpperCase()}</span>
-                  </div>
+                    <span style={{ fontSize: 11, background: contact.type === "Broker" ? C.toorSoft : "#E8F3EC", padding: "2px 6px", borderRadius: 6, color: C.ink }}>{contact.type.toUpperCase()}</span>
+                    <span style={{ fontSize: 11, color: C.grey, fontWeight: 600 }}> › view trades</span>
+                  </button>
                   <div style={{ fontWeight: 800, color: totalPL > 0 ? C.green : totalPL < 0 ? C.red : C.grey, fontSize: 15 }}>
                     {totalPL === 0 ? "P&L —" : (totalPL > 0 ? "+" : "−") + "₹" + fmt(Math.abs(totalPL))}
                   </div>
