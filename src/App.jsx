@@ -50,6 +50,7 @@ const emptyTrade = (nextNo, defaultBrokerage) => ({
   forwardPlace: "",
   forwardSide: "",
   customDescription: "",
+  deliveryFrom: "",
   paymentCondition: "",
   notes: "",
 });
@@ -98,6 +99,7 @@ function buyerMessage(t, calc, brokerName) {
     `Quantity: ${t.qtyMT} MT (${calc.bags} bags)${calc.mt % 25 === 0 ? ` / ${fclFromMT(calc.mt)} FCL` : ""}`,
     `Rate: ₹${t.buyerPrice} per 100 kg`,
     `Delivery: ${deliveryText(t)}`,
+    t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.buyerBrokerage > 0
       ? `Brokerage: ₹${t.buyerBrokerage} per bag`
@@ -119,6 +121,7 @@ function sellerMessage(t, calc, brokerName) {
     `Quantity: ${t.qtyMT} MT (${calc.bags} bags)${calc.mt % 25 === 0 ? ` / ${fclFromMT(calc.mt)} FCL` : ""}`,
     `Rate: ₹${t.sellerPrice} per 100 kg`,
     `Delivery: ${deliveryText(t)}`,
+    t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.sellerBrokerage > 0
       ? `Brokerage: ₹${t.sellerBrokerage} per bag`
@@ -552,6 +555,10 @@ function BrokerDesk({ session }) {
               </div>
             </Field>
 
+            <Field label="Delivery from (write any place)">
+              <input style={inputStyle} value={trade.deliveryFrom} onChange={(e) => setTrade({ ...trade, deliveryFrom: e.target.value })} placeholder="e.g. Chennai, Mumbai, Mundra Port…" />
+            </Field>
+
             <Field label="Payment condition">
               <input style={inputStyle} value={trade.paymentCondition} onChange={(e) => setTrade({ ...trade, paymentCondition: e.target.value })} placeholder="e.g. Payment within 3 days of delivery" />
             </Field>
@@ -586,7 +593,7 @@ function BrokerDesk({ session }) {
                   <div style={{ fontSize: 13.5, marginTop: 4, color: C.ink }}>
                     {tc.seller?.name || "—"} → {tc.buyer?.name || "—"} · {t.qtyMT} MT ({fmt(tc.bags)} bags)
                   </div>
-                  <div style={{ fontSize: 13, color: C.grey }}>{deliveryText(t)} · Sell ₹{t.sellerPrice} / Buy ₹{t.buyerPrice} per 100kg</div>
+                  <div style={{ fontSize: 13, color: C.grey }}>{deliveryText(t)}{t.deliveryFrom ? ` · From ${t.deliveryFrom}` : ""} · Sell ₹{t.sellerPrice} / Buy ₹{t.buyerPrice} per 100kg</div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
                     <div style={{ fontWeight: 800, color: C.green }}>{rupee(tc.total)}</div>
                     <div style={{ display: "flex", gap: 8 }}>
