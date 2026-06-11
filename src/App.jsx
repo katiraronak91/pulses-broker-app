@@ -9,16 +9,20 @@ const C = {
   wa: "#25D366", line: "#E8DFCE", grey: "#8A7F6F", red: "#B3261E",
 };
 
+const READY_OPTIONS = ["Container", "Warehouse", "Next Week"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const FORWARD_PLACES = ["Pure Container", "Warehouse"];
+const FORWARD_SIDES = ["Seller Option", "Buyer Option"];
 const CUSTOM_DESC = "Custom — write your own";
-const DEFAULT_DELIVERY_TYPES = [
-  "Ready Delivery",
-  "Delivery from Container",
-  "Delivery from Warehouse",
-  "Forward Trade",
-];
 
-const deliveryText = (t) =>
-  t.deliveryType === CUSTOM_DESC ? (t.customDescription || "—") : t.deliveryType;
+const deliveryText = (t) => {
+  if (t.tradeMode === "Ready") return `Ready Delivery · ${t.readyOption || "—"}`;
+  if (t.tradeMode === "Forward")
+    return `${t.forwardMonth || "—"} Delivery · ${t.forwardPlace || "—"} · ${t.forwardSide || "—"}`;
+  if (t.tradeMode === "Custom") return t.customDescription || "—";
+  // older trades saved before this update
+  return t.deliveryType === CUSTOM_DESC ? (t.customDescription || "—") : (t.deliveryType || "—");
+};
 
 const DEFAULT_PRODUCTS = [
   { name: "Toor", qualities: ["Lemon", "Lincky", "Segain", "Red", "White", "Arusha", "Ghagri", "Mozambique White"] },
@@ -40,7 +44,11 @@ const emptyTrade = (nextNo, defaultBrokerage) => ({
   sellerPrice: "",
   buyerBrokerage: String(defaultBrokerage),
   sellerBrokerage: String(defaultBrokerage),
-  deliveryType: DEFAULT_DELIVERY_TYPES[0],
+  tradeMode: "Ready",
+  readyOption: "Container",
+  forwardMonth: "",
+  forwardPlace: "",
+  forwardSide: "",
   customDescription: "",
   paymentCondition: "",
   notes: "",
@@ -199,7 +207,6 @@ function BrokerDesk({ session }) {
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
-  const [deliveryTypes, setDeliveryTypes] = useState(DEFAULT_DELIVERY_TYPES);
   const [trades, setTrades] = useState([]);
   const [settings, setSettings] = useState({ brokerName: "", defaultBrokerage: 5 });
   const [nextNo, setNextNo] = useState(1);
@@ -221,7 +228,6 @@ function BrokerDesk({ session }) {
         const d = data.data;
         setContacts(d.contacts || []);
         setProducts(d.products?.length ? d.products : DEFAULT_PRODUCTS);
-        setDeliveryTypes(d.deliveryTypes?.length ? d.deliveryTypes : DEFAULT_DELIVERY_TYPES);
         setTrades(d.trades || []);
         setSettings(d.settings || { brokerName: "", defaultBrokerage: 5 });
         setNextNo(d.nextNo || 1);
@@ -236,7 +242,6 @@ function BrokerDesk({ session }) {
     const payload = {
       contacts: over.contacts ?? contacts,
       products: over.products ?? products,
-      deliveryTypes: over.deliveryTypes ?? deliveryTypes,
       trades: over.trades ?? trades,
       settings: over.settings ?? settings,
       nextNo: over.nextNo ?? nextNo,
@@ -266,6 +271,10 @@ function BrokerDesk({ session }) {
     if (!trade.buyerId || !trade.sellerId) return showToast("Select buyer and seller");
     if (!trade.buyerPrice || !trade.sellerPrice) return showToast("Enter both prices");
     if (Number(trade.qtyMT) < 25) return showToast("Minimum quantity is 25 MT (1 FCL)");
+    if (trade.tradeMode === "Forward" && (!trade.forwardMonth || !trade.forwardPlace || !trade.forwardSide))
+      return showToast("Select month, place and option for forward trade");
+    if (trade.tradeMode === "Custom" && !trade.customDescription.trim())
+      return showToast("Write your trade description");
     const newTrade = { ...trade, id: Date.now() };
     const newTrades = [newTrade, ...trades];
     const newNext = Math.max(nextNo, Number(trade.tradeNo) || 0) + 1;
@@ -318,24 +327,6 @@ function BrokerDesk({ session }) {
     const np = products.filter((p) => p.name !== name);
     setProducts(np);
     persist({ products: np });
-  };
-
-  // ----- Trade category form -----
-  const [catForm, setCatForm] = useState("");
-  const addCategory = () => {
-    const v = catForm.trim();
-    if (!v) return showToast("Enter a category name");
-    if (deliveryTypes.includes(v)) return showToast("Already exists");
-    const nd = [...deliveryTypes, v];
-    setDeliveryTypes(nd);
-    persist({ deliveryTypes: nd });
-    setCatForm("");
-    showToast("Category added ✓");
-  };
-  const deleteCategory = (name) => {
-    const nd = deliveryTypes.filter((d) => d !== name);
-    setDeliveryTypes(nd);
-    persist({ deliveryTypes: nd });
   };
 
   if (loading)
@@ -489,19 +480,75 @@ function BrokerDesk({ session }) {
             </div>
 
             <Field label="Trade category / Delivery">
-              <select style={inputStyle} value={trade.deliveryType} onChange={(e) => setTrade({ ...trade, deliveryType: e.target.value })}>
-                {[...deliveryTypes, CUSTOM_DESC].map((d) => <option key={d}>{d}</option>)}
-              </select>
-              {trade.deliveryType === CUSTOM_DESC && (
+              {/* Step 1: Ready or Forward */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                {["Ready", "Forward", "Custom"].map((m) => (
+                  <button key={m}
+                    onClick={() => setTrade({ ...trade, tradeMode: m, readyOption: m === "Ready" ? "Container" : "", forwardMonth: "", forwardPlace: "", forwardSide: "", customDescription: "" })}
+                    style={{ flex: 1, padding: 10, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 14, border: `1.5px solid ${trade.tradeMode === m ? C.maroon : C.line}`, background: trade.tradeMode === m ? C.maroon : "#fff", color: trade.tradeMode === m ? "#fff" : C.ink }}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+
+              {/* Ready: pick place */}
+              {trade.tradeMode === "Ready" && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {READY_OPTIONS.map((o) => (
+                    <button key={o} onClick={() => setTrade({ ...trade, readyOption: o })}
+                      style={{ padding: "8px 14px", borderRadius: 16, fontWeight: 600, cursor: "pointer", fontSize: 13, border: `1.5px solid ${trade.readyOption === o ? C.green : C.line}`, background: trade.readyOption === o ? C.green : "#fff", color: trade.readyOption === o ? "#fff" : C.ink }}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Forward: month → place → option */}
+              {trade.tradeMode === "Forward" && (
+                <div>
+                  <select style={{ ...inputStyle, marginBottom: 8 }} value={trade.forwardMonth}
+                    onChange={(e) => setTrade({ ...trade, forwardMonth: e.target.value, forwardPlace: "", forwardSide: "" })}>
+                    <option value="">Select delivery month…</option>
+                    {MONTHS.map((m) => <option key={m}>{m}</option>)}
+                  </select>
+
+                  {trade.forwardMonth && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                      {FORWARD_PLACES.map((p) => (
+                        <button key={p} onClick={() => setTrade({ ...trade, forwardPlace: p, forwardSide: "" })}
+                          style={{ padding: "8px 14px", borderRadius: 16, fontWeight: 600, cursor: "pointer", fontSize: 13, border: `1.5px solid ${trade.forwardPlace === p ? C.green : C.line}`, background: trade.forwardPlace === p ? C.green : "#fff", color: trade.forwardPlace === p ? "#fff" : C.ink }}>
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {trade.forwardPlace && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {FORWARD_SIDES.map((s) => (
+                        <button key={s} onClick={() => setTrade({ ...trade, forwardSide: s })}
+                          style={{ padding: "8px 14px", borderRadius: 16, fontWeight: 600, cursor: "pointer", fontSize: 13, border: `1.5px solid ${trade.forwardSide === s ? C.toor : C.line}`, background: trade.forwardSide === s ? C.toor : "#fff", color: trade.forwardSide === s ? C.ink : C.ink }}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Custom: free text */}
+              {trade.tradeMode === "Custom" && (
                 <input
-                  style={{ ...inputStyle, marginTop: 8 }}
+                  style={inputStyle}
                   value={trade.customDescription}
                   onChange={(e) => setTrade({ ...trade, customDescription: e.target.value })}
                   placeholder="Write your own trade description…"
                 />
               )}
-              <div style={{ fontSize: 12, color: C.grey, marginTop: 4 }}>
-                Add or remove categories in <b>Setup</b> tab — e.g. "July Delivery Seller Option".
+
+              {/* Live preview of how it will appear */}
+              <div style={{ fontSize: 12.5, color: C.green, marginTop: 8, fontWeight: 700 }}>
+                ✓ {deliveryText(trade)}
               </div>
             </Field>
 
@@ -602,23 +649,6 @@ function BrokerDesk({ session }) {
         {/* ============ SETTINGS ============ */}
         {tab === "settings" && (
           <div>
-            <div style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>Trade categories</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {deliveryTypes.map((d) => (
-                  <span key={d} style={{ fontSize: 12.5, background: C.toorSoft, padding: "5px 10px", borderRadius: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    {d}
-                    <button onClick={() => { if (window.confirm('Remove "' + d + '"?')) deleteCategory(d); }} style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", fontWeight: 800, padding: 0, fontSize: 13 }}>✕</button>
-                  </span>
-                ))}
-                {deliveryTypes.length === 0 && <span style={{ fontSize: 12.5, color: C.grey }}>No categories yet — add one below</span>}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input style={{ ...inputStyle, flex: 1 }} value={catForm} onChange={(e) => setCatForm(e.target.value)} placeholder='e.g. July Delivery Seller Option' />
-                <Btn small onClick={addCategory}>＋ Add</Btn>
-              </div>
-            </div>
-
             <Field label="Your broker / firm name (appears in WhatsApp confirmation)">
               <input style={inputStyle} value={settings.brokerName} onChange={(e) => setSettings({ ...settings, brokerName: e.target.value })} placeholder="e.g. Sharma Brokers, Mumbai" />
             </Field>
