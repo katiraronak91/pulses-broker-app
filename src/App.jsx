@@ -56,6 +56,8 @@ const emptyTrade = (nextNo, defaultBrokerage) => ({
   lorryNo: "",
   grossWt: "",
   netWt: "",
+  squaredWith: "",
+  squarePrice: "",
   notes: "",
 });
 
@@ -135,7 +137,7 @@ function computePositions(trades, contacts) {
     .sort((a, b) => a.contact.name.localeCompare(b.contact.name));
 }
 
-function buyerMessage(t, calc, brokerName) {
+function buyerMessage(t, calc, brokerName, contacts = []) {
   return [
     `*TRADE CONFIRMATION*`,
     `Trade No: ${t.tradeNo}`,
@@ -149,7 +151,7 @@ function buyerMessage(t, calc, brokerName) {
     t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
     t.status === "Delivered" && t.lorryNo ? `Lorry: ${t.lorryNo}` : null,
     t.status === "Delivered" && (t.grossWt || t.netWt) ? `Weight: ${t.grossWt ? `Gross ${t.grossWt} kg` : ""}${t.grossWt && t.netWt ? " · " : ""}${t.netWt ? `Net ${t.netWt} kg` : ""}` : null,
-    t.status === "Squared Off" ? `Status: SQUARED OFF — billing & P/L settlement only` : null,
+    t.status === "Squared Off" ? `Status: SQUARED OFF${(() => { const w = contacts.find((c) => c.id === t.squaredWith)?.name; return w ? ` with ${w}` : ""; })()}${t.squarePrice ? ` @ ₹${t.squarePrice}` : ""} — billing & P/L settlement only` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.buyerBrokerage > 0
       ? `Brokerage: ₹${t.buyerBrokerage} per bag`
@@ -160,7 +162,7 @@ function buyerMessage(t, calc, brokerName) {
   ].filter((x) => x !== null).join("\n");
 }
 
-function sellerMessage(t, calc, brokerName) {
+function sellerMessage(t, calc, brokerName, contacts = []) {
   return [
     `*TRADE CONFIRMATION*`,
     `Trade No: ${t.tradeNo}`,
@@ -174,7 +176,7 @@ function sellerMessage(t, calc, brokerName) {
     t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
     t.status === "Delivered" && t.lorryNo ? `Lorry: ${t.lorryNo}` : null,
     t.status === "Delivered" && (t.grossWt || t.netWt) ? `Weight: ${t.grossWt ? `Gross ${t.grossWt} kg` : ""}${t.grossWt && t.netWt ? " · " : ""}${t.netWt ? `Net ${t.netWt} kg` : ""}` : null,
-    t.status === "Squared Off" ? `Status: SQUARED OFF — billing & P/L settlement only` : null,
+    t.status === "Squared Off" ? `Status: SQUARED OFF${(() => { const w = contacts.find((c) => c.id === t.squaredWith)?.name; return w ? ` with ${w}` : ""; })()}${t.squarePrice ? ` @ ₹${t.squarePrice}` : ""} — billing & P/L settlement only` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.sellerBrokerage > 0
       ? `Brokerage: ₹${t.sellerBrokerage} per bag`
@@ -272,6 +274,7 @@ function BrokerDesk({ session }) {
   const [tradeSearch, setTradeSearch] = useState("");
   const [tradeMonth, setTradeMonth] = useState("");
   const [tradeCat, setTradeCat] = useState("");
+  const [tradeStatus, setTradeStatus] = useState("");
   const [toast, setToast] = useState("");
   const [syncState, setSyncState] = useState("ok"); // ok | saving | error
   const saveTimer = useRef(null);
@@ -430,8 +433,8 @@ function BrokerDesk({ session }) {
   // ---------- WhatsApp confirmation screen ----------
   if (savedTrade) {
     const sc = calcTrade(savedTrade, contacts);
-    const bMsg = buyerMessage(savedTrade, sc, settings.brokerName);
-    const sMsg = sellerMessage(savedTrade, sc, settings.brokerName);
+    const bMsg = buyerMessage(savedTrade, sc, settings.brokerName, contacts);
+    const sMsg = sellerMessage(savedTrade, sc, settings.brokerName, contacts);
     return (
       <div style={{ fontFamily: "system-ui", background: C.paper, minHeight: "100vh", padding: 16 }}>
         <div style={{ maxWidth: 520, margin: "0 auto" }}>
@@ -681,8 +684,21 @@ function BrokerDesk({ session }) {
                 </div>
               )}
               {trade.status === "Squared Off" && (
-                <div style={{ fontSize: 12.5, color: C.grey, background: C.toorSoft, borderRadius: 8, padding: "8px 10px" }}>
-                  Circle complete — no physical delivery. Billing and profit/loss settlement only.
+                <div style={{ background: C.toorSoft, border: `1.5px solid ${C.toor}`, borderRadius: 8, padding: 10 }}>
+                  <Field label="Squared off with (party / broker)">
+                    <PartyPicker contacts={contacts} value={trade.squaredWith} onChange={(id) => setTrade({ ...trade, squaredWith: id })} placeholder="Type to search who you squared with…" />
+                  </Field>
+                  <Field label="Square-off price ₹/100kg">
+                    <input type="number" style={inputStyle} value={trade.squarePrice} onChange={(e) => setTrade({ ...trade, squarePrice: e.target.value })} placeholder="e.g. 7700" />
+                  </Field>
+                  <div style={{ fontSize: 12.5, color: C.grey }}>
+                    Circle complete — no physical delivery. Billing and profit/loss settlement only.
+                    {trade.squarePrice && trade.buyerPrice && (
+                      <span style={{ fontWeight: 700, color: C.ink }}>
+                        {" "}Difference vs buyer rate ₹{trade.buyerPrice}: {(Number(trade.squarePrice) - Number(trade.buyerPrice)) >= 0 ? "+" : "−"}₹{fmt(Math.abs((Number(trade.squarePrice) - Number(trade.buyerPrice)) * (Number(trade.qtyMT) || 0) * 10))} on {trade.qtyMT} MT
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </Field>
@@ -727,7 +743,7 @@ function BrokerDesk({ session }) {
             const ib = MONTHS.indexOf(b.replace(" Delivery", ""));
             return ia - ib;
           });
-          const filtered = trades
+          const baseFiltered = trades
             .filter((t) => {
               if (tradeCat && catOf(t) !== tradeCat) return false;
               if (tradeMonth && !(t.date || "").startsWith(tradeMonth)) return false;
@@ -741,7 +757,12 @@ function BrokerDesk({ session }) {
                 (t.quality || "").toLowerCase().includes(q) ||
                 String(t.tradeNo).toLowerCase().includes(q)
               );
-            })
+            });
+          const statusOf = (t) => t.status || "Pending";
+          const counts = { Pending: 0, Delivered: 0, "Squared Off": 0 };
+          baseFiltered.forEach((t) => { counts[statusOf(t)] = (counts[statusOf(t)] || 0) + 1; });
+          const filtered = baseFiltered
+            .filter((t) => !tradeStatus || statusOf(t) === tradeStatus)
             .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
           const filteredEarnings = filtered.reduce((s, t) => s + calcTrade(t, contacts).total, 0);
           const filteredMT = filtered.reduce((s, t) => s + (Number(t.qtyMT) || 0), 0);
@@ -764,12 +785,26 @@ function BrokerDesk({ session }) {
                   {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                 </select>
               </div>
-              {(tradeSearch || tradeMonth || tradeCat) && (
+              {/* Status chips */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                {["", "Pending", "Delivered", "Squared Off"].map((s) => {
+                  const active = tradeStatus === s;
+                  const label = s === "" ? `All (${baseFiltered.length})` : `${s} (${counts[s] || 0})`;
+                  const col = s === "Delivered" ? C.green : s === "Squared Off" ? "#8a6d1a" : s === "Pending" ? C.red : C.maroon;
+                  return (
+                    <button key={s || "all"} onClick={() => setTradeStatus(s)}
+                      style={{ padding: "6px 12px", borderRadius: 14, fontWeight: 700, cursor: "pointer", fontSize: 12.5, border: `1.5px solid ${active ? col : C.line}`, background: active ? col : "#fff", color: active ? "#fff" : C.ink }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {(tradeSearch || tradeMonth || tradeCat || tradeStatus) && (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.toorSoft, border: `1.5px solid ${C.toor}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12, fontSize: 13 }}>
                   <span style={{ fontWeight: 700 }}>
                     {filtered.length} trade{filtered.length !== 1 ? "s" : ""} · {fmt(filteredMT)} MT · Earned {rupee(filteredEarnings)}
                   </span>
-                  <button onClick={() => { setTradeSearch(""); setTradeMonth(""); setTradeCat(""); }} style={{ border: "none", background: "transparent", color: C.maroon, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>✕ Clear</button>
+                  <button onClick={() => { setTradeSearch(""); setTradeMonth(""); setTradeCat(""); setTradeStatus(""); }} style={{ border: "none", background: "transparent", color: C.maroon, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>✕ Clear</button>
                 </div>
               )}
               {trades.length === 0 && <Empty text="No trades yet. Your saved trades will appear here as a ledger." />}
@@ -794,6 +829,17 @@ function BrokerDesk({ session }) {
                     {t.status === "Delivered" && (t.lorryNo || t.grossWt || t.netWt) && (
                       <div style={{ fontSize: 12.5, color: C.green, marginTop: 2, fontWeight: 600 }}>
                         🚚 {t.lorryNo ? `Lorry ${t.lorryNo}` : ""}{t.grossWt ? ` · Gross ${fmt(t.grossWt)} kg` : ""}{t.netWt ? ` · Net ${fmt(t.netWt)} kg` : ""}
+                      </div>
+                    )}
+                    {t.status === "Squared Off" && (t.squaredWith || t.squarePrice) && (
+                      <div style={{ fontSize: 12.5, color: "#8a6d1a", marginTop: 2, fontWeight: 600 }}>
+                        🔁 Squared with {contacts.find((c) => c.id === t.squaredWith)?.name || "—"}{t.squarePrice ? ` @ ₹${t.squarePrice}` : ""}
+                      </div>
+                    )}
+                    {(t.status || "Pending") === "Pending" && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <Btn small color={C.green} onClick={() => { setTrade({ ...t, status: "Delivered" }); setEditingTradeId(t.id); setTab("new"); }}>🚚 Mark Delivered</Btn>
+                        <Btn small color={C.toor} onClick={() => { setTrade({ ...t, status: "Squared Off" }); setEditingTradeId(t.id); setTab("new"); }}>🔁 Square Off</Btn>
                       </div>
                     )}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
