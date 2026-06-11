@@ -88,6 +88,49 @@ function calcTrade(t, contacts) {
   };
 }
 
+function computePositions(trades, contacts) {
+  // contactId -> { contact, products: { key: {bought, sold, buyVal, sellVal} } }
+  const map = {};
+  const ensure = (id, key) => {
+    if (!map[id]) map[id] = { contact: contacts.find((c) => c.id === id), products: {} };
+    if (!map[id].products[key]) map[id].products[key] = { bought: 0, sold: 0, buyVal: 0, sellVal: 0 };
+    return map[id].products[key];
+  };
+  trades.forEach((t) => {
+    const mt = Number(t.qtyMT) || 0;
+    if (!mt) return;
+    const key = t.product + (t.quality ? " – " + t.quality : "");
+    const bp = Number(t.buyerPrice) || 0;
+    const sp = Number(t.sellerPrice) || 0;
+    if (t.buyerId) {
+      const r = ensure(t.buyerId, key);
+      r.bought += mt;
+      r.buyVal += mt * 10 * bp; // rate is per 100 kg → MT × 10 units of 100kg
+    }
+    if (t.sellerId) {
+      const r = ensure(t.sellerId, key);
+      r.sold += mt;
+      r.sellVal += mt * 10 * sp;
+    }
+  });
+  return Object.values(map)
+    .filter((e) => e.contact)
+    .map((e) => {
+      let totalPL = 0;
+      const rows = Object.entries(e.products).map(([key, r]) => {
+        const avgBuy = r.bought ? r.buyVal / (r.bought * 10) : 0;
+        const avgSell = r.sold ? r.sellVal / (r.sold * 10) : 0;
+        const net = r.bought - r.sold;
+        const matched = Math.min(r.bought, r.sold);
+        const pl = matched > 0 ? matched * 10 * (avgSell - avgBuy) : 0;
+        totalPL += pl;
+        return { key, ...r, avgBuy, avgSell, net, matched, pl };
+      });
+      return { contact: e.contact, rows, totalPL };
+    })
+    .sort((a, b) => a.contact.name.localeCompare(b.contact.name));
+}
+
 function buyerMessage(t, calc, brokerName) {
   return [
     `*TRADE CONFIRMATION*`,
@@ -215,6 +258,7 @@ function BrokerDesk({ session }) {
   const [nextNo, setNextNo] = useState(1);
   const [trade, setTrade] = useState(emptyTrade(1, 5));
   const [savedTrade, setSavedTrade] = useState(null);
+  const [editingTradeId, setEditingTradeId] = useState(null);
   const [toast, setToast] = useState("");
   const [syncState, setSyncState] = useState("ok"); // ok | saving | error
   const saveTimer = useRef(null);
@@ -278,14 +322,34 @@ function BrokerDesk({ session }) {
       return showToast("Select month, place and option for forward trade");
     if (trade.tradeMode === "Custom" && !trade.customDescription.trim())
       return showToast("Write your trade description");
-    const newTrade = { ...trade, id: Date.now() };
-    const newTrades = [newTrade, ...trades];
-    const newNext = Math.max(nextNo, Number(trade.tradeNo) || 0) + 1;
-    setTrades(newTrades);
-    setNextNo(newNext);
-    persist({ trades: newTrades, nextNo: newNext });
-    setSavedTrade(newTrade);
-    showToast("Trade saved ✓");
+    let newTrades, savedT;
+    if (editingTradeId) {
+      savedT = { ...trade, id: editingTradeId };
+      newTrades = trades.map((t) => (t.id === editingTradeId ? savedT : t));
+      setTrades(newTrades);
+      persist({ trades: newTrades });
+      setEditingTradeId(null);
+      showToast("Trade updated ✓");
+    } else {
+      savedT = { ...trade, id: Date.now() };
+      newTrades = [savedT, ...trades];
+      const newNext = Math.max(nextNo, Number(trade.tradeNo) || 0) + 1;
+      setTrades(newTrades);
+      setNextNo(newNext);
+      persist({ trades: newTrades, nextNo: newNext });
+      showToast("Trade saved ✓");
+    }
+    setSavedTrade(savedT);
+  };
+
+  const startEditTrade = (t) => {
+    setTrade({ ...t });
+    setEditingTradeId(t.id);
+    setTab("new");
+  };
+  const cancelEditTrade = () => {
+    setEditingTradeId(null);
+    setTrade(emptyTrade(nextNo, settings.defaultBrokerage));
   };
 
   const deleteTrade = (id) => {
@@ -387,8 +451,9 @@ function BrokerDesk({ session }) {
 
   // ---------- Tabs ----------
   const tabs = [
-    { id: "new", label: "New Trade", icon: "✍️" },
+    { id: "new", label: "New", icon: "✍️" },
     { id: "trades", label: "Trades", icon: "📒" },
+    { id: "position", label: "P&L", icon: "📊" },
     { id: "parties", label: "Parties", icon: "👥" },
     { id: "products", label: "Products", icon: "🌾" },
     { id: "settings", label: "Setup", icon: "⚙️" },
@@ -422,6 +487,12 @@ function BrokerDesk({ session }) {
         {/* ============ NEW TRADE ============ */}
         {tab === "new" && (
           <div>
+            {editingTradeId && (
+              <div style={{ background: C.toorSoft, border: `1.5px solid ${C.toor}`, borderRadius: 10, padding: "10px 12px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontWeight: 800, fontSize: 14 }}>✏️ Editing trade #{trade.tradeNo}</span>
+                <Btn small outline onClick={cancelEditTrade}>Cancel edit</Btn>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10 }}>
               <div style={{ flex: 1 }}><Field label="Trade No."><input style={inputStyle} value={trade.tradeNo} onChange={(e) => setTrade({ ...trade, tradeNo: e.target.value })} /></Field></div>
               <div style={{ flex: 1.4 }}><Field label="Date"><input type="date" style={inputStyle} value={trade.date} onChange={(e) => setTrade({ ...trade, date: e.target.value })} /></Field></div>
@@ -583,7 +654,7 @@ function BrokerDesk({ session }) {
               </div>
             </div>
 
-            <Btn full onClick={saveTrade}>💾 Save Trade & Prepare WhatsApp</Btn>
+            <Btn full onClick={saveTrade}>{editingTradeId ? "💾 Update Trade & Prepare WhatsApp" : "💾 Save Trade & Prepare WhatsApp"}</Btn>
           </div>
         )}
 
@@ -606,6 +677,7 @@ function BrokerDesk({ session }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
                     <div style={{ fontWeight: 800, color: C.green }}>{rupee(tc.total)}</div>
                     <div style={{ display: "flex", gap: 8 }}>
+                      <Btn small outline onClick={() => startEditTrade(t)}>✏️</Btn>
                       <Btn small color={C.wa} onClick={() => setSavedTrade(t)}>WhatsApp</Btn>
                       <Btn small outline color={C.red} onClick={() => { if (window.confirm("Delete trade #" + t.tradeNo + "?")) deleteTrade(t.id); }}>Delete</Btn>
                     </div>
@@ -613,6 +685,49 @@ function BrokerDesk({ session }) {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* ============ POSITION / P&L ============ */}
+        {tab === "position" && (
+          <div>
+            {trades.length === 0 && <Empty text="No trades yet. Positions and P&L will appear here once you enter trades." />}
+            {computePositions(trades, contacts).map(({ contact, rows, totalPL }) => (
+              <div key={contact.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 800 }}>
+                    {contact.name}{" "}
+                    <span style={{ fontSize: 11, background: contact.type === "Broker" ? C.toorSoft : "#E8F3EC", padding: "2px 6px", borderRadius: 6 }}>{contact.type.toUpperCase()}</span>
+                  </div>
+                  <div style={{ fontWeight: 800, color: totalPL > 0 ? C.green : totalPL < 0 ? C.red : C.grey, fontSize: 15 }}>
+                    {totalPL === 0 ? "P&L —" : (totalPL > 0 ? "+" : "−") + "₹" + fmt(Math.abs(totalPL))}
+                  </div>
+                </div>
+                {rows.map((r) => (
+                  <div key={r.key} style={{ borderTop: `1px solid #F2EDE0`, paddingTop: 8, marginTop: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: 700, fontSize: 14 }}>{r.key}</span>
+                      <span style={{ fontWeight: 800, fontSize: 13, padding: "3px 10px", borderRadius: 12, background: r.net > 0 ? "#E8F3EC" : r.net < 0 ? "#FBE9E7" : "#F2EDE0", color: r.net > 0 ? C.green : r.net < 0 ? C.red : C.grey }}>
+                        {r.net > 0 ? `LONG ${fmt(r.net)} MT` : r.net < 0 ? `SHORT ${fmt(Math.abs(r.net))} MT` : "SQUARED OFF"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: C.grey, marginTop: 4, lineHeight: 1.6 }}>
+                      Bought {fmt(r.bought)} MT{r.bought ? ` @ avg ₹${fmt(r.avgBuy)}` : ""} · Sold {fmt(r.sold)} MT{r.sold ? ` @ avg ₹${fmt(r.avgSell)}` : ""}
+                      {r.matched > 0 && (
+                        <span style={{ fontWeight: 700, color: r.pl > 0 ? C.green : r.pl < 0 ? C.red : C.grey }}>
+                          {" "}· P&L on {fmt(r.matched)} MT: {(r.pl >= 0 ? "+" : "−") + "₹" + fmt(Math.abs(r.pl))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {trades.length > 0 && (
+              <div style={{ fontSize: 12, color: C.grey, lineHeight: 1.6, padding: "4px 4px 0" }}>
+                <b>How to read:</b> LONG = party bought more than sold (holding stock). SHORT = sold more than bought (needs to buy/deliver). P&L is calculated on the matched (bought & sold) quantity at average rates. Rates per 100 kg.
+              </div>
+            )}
           </div>
         )}
 
