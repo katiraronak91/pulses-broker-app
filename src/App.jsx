@@ -296,13 +296,28 @@ function BrokerDesk({ session }) {
 
   // ----- Contact form -----
   const [cForm, setCForm] = useState({ name: "", phone: "", type: "Party" });
+  const [editingId, setEditingId] = useState(null);
   const addContact = () => {
     if (!cForm.name.trim()) return showToast("Enter a name");
-    const nc = [...contacts, { ...cForm, id: Date.now() }];
+    let nc;
+    if (editingId) {
+      nc = contacts.map((c) => (c.id === editingId ? { ...c, name: cForm.name, phone: cForm.phone, type: cForm.type } : c));
+    } else {
+      nc = [...contacts, { ...cForm, id: Date.now() }];
+    }
     setContacts(nc);
     persist({ contacts: nc });
     setCForm({ name: "", phone: "", type: "Party" });
-    showToast("Saved ✓");
+    setEditingId(null);
+    showToast(editingId ? "Updated ✓" : "Saved ✓");
+  };
+  const startEditContact = (c) => {
+    setCForm({ name: c.name, phone: c.phone || "", type: c.type });
+    setEditingId(c.id);
+  };
+  const cancelEditContact = () => {
+    setCForm({ name: "", phone: "", type: "Party" });
+    setEditingId(null);
   };
   const deleteContact = (id) => {
     const nc = contacts.filter((c) => c.id !== id);
@@ -444,10 +459,7 @@ function BrokerDesk({ session }) {
             <div style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderLeft: `4px solid ${C.toor}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
               <div style={{ fontWeight: 800, marginBottom: 8 }}>Seller side <span style={{ fontSize: 11, color: C.grey }}>(you buy from)</span></div>
               <Field label="Seller">
-                <select style={inputStyle} value={trade.sellerId} onChange={(e) => setTrade({ ...trade, sellerId: Number(e.target.value) || e.target.value })}>
-                  <option value="">Select…</option>
-                  {contacts.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
-                </select>
+                <PartyPicker contacts={contacts} value={trade.sellerId} onChange={(id) => setTrade({ ...trade, sellerId: id })} placeholder="Type 2-3 letters to search seller…" />
               </Field>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ flex: 1 }}><Field label="Seller rate ₹/100kg"><input type="number" style={inputStyle} value={trade.sellerPrice} onChange={(e) => setTrade({ ...trade, sellerPrice: e.target.value })} placeholder="7500" /></Field></div>
@@ -465,10 +477,7 @@ function BrokerDesk({ session }) {
             <div style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderLeft: `4px solid ${C.green}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
               <div style={{ fontWeight: 800, marginBottom: 8 }}>Buyer side <span style={{ fontSize: 11, color: C.grey }}>(you sell to)</span></div>
               <Field label="Buyer">
-                <select style={inputStyle} value={trade.buyerId} onChange={(e) => setTrade({ ...trade, buyerId: Number(e.target.value) || e.target.value })}>
-                  <option value="">Select…</option>
-                  {contacts.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
-                </select>
+                <PartyPicker contacts={contacts} value={trade.buyerId} onChange={(id) => setTrade({ ...trade, buyerId: id })} placeholder="Type 2-3 letters to search buyer…" />
               </Field>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ flex: 1 }}><Field label="Buyer rate ₹/100kg"><input type="number" style={inputStyle} value={trade.buyerPrice} onChange={(e) => setTrade({ ...trade, buyerPrice: e.target.value })} placeholder="7550" /></Field></div>
@@ -610,8 +619,8 @@ function BrokerDesk({ session }) {
         {/* ============ PARTIES ============ */}
         {tab === "parties" && (
           <div>
-            <div style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>Add party / broker</div>
+            <div style={{ background: "#fff", border: `1.5px solid ${editingId ? C.toor : C.line}`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontWeight: 800, marginBottom: 8 }}>{editingId ? "✏️ Edit party / broker" : "Add party / broker"}</div>
               <Field label="Name"><input style={inputStyle} value={cForm.name} onChange={(e) => setCForm({ ...cForm, name: e.target.value })} placeholder="Firm or person name" /></Field>
               <Field label="WhatsApp number"><input style={inputStyle} value={cForm.phone} onChange={(e) => setCForm({ ...cForm, phone: e.target.value })} placeholder="10-digit mobile" /></Field>
               <Field label="Type">
@@ -625,7 +634,14 @@ function BrokerDesk({ session }) {
                 </div>
                 <div style={{ fontSize: 12, color: C.grey, marginTop: 4 }}>Brokers pay no brokerage — one-side brokerage applies automatically.</div>
               </Field>
-              <Btn full onClick={addContact}>＋ Add</Btn>
+              {editingId ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1 }}><Btn full onClick={addContact}>💾 Save changes</Btn></div>
+                  <Btn outline onClick={cancelEditContact}>Cancel</Btn>
+                </div>
+              ) : (
+                <Btn full onClick={addContact}>＋ Add</Btn>
+              )}
             </div>
             {contacts.length === 0 && <Empty text="No parties yet. Add your buyers, sellers and fellow brokers here." />}
             {contacts.map((c) => (
@@ -634,7 +650,10 @@ function BrokerDesk({ session }) {
                   <div style={{ fontWeight: 700 }}>{c.name} <span style={{ fontSize: 11, background: c.type === "Broker" ? C.toorSoft : "#E8F3EC", padding: "2px 6px", borderRadius: 6, marginLeft: 4 }}>{c.type.toUpperCase()}</span></div>
                   <div style={{ fontSize: 13, color: C.grey }}>{c.phone || "No number"}</div>
                 </div>
-                <Btn small outline color={C.red} onClick={() => deleteContact(c.id)}>✕</Btn>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <Btn small outline onClick={() => startEditContact(c)}>✏️ Edit</Btn>
+                  <Btn small outline color={C.red} onClick={() => { if (window.confirm("Delete " + c.name + "?")) deleteContact(c.id); }}>✕</Btn>
+                </div>
               </div>
             ))}
           </div>
@@ -696,6 +715,47 @@ function BrokerDesk({ session }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function PartyPicker({ contacts, value, onChange, placeholder }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const sel = contacts.find((c) => c.id === value);
+  const matches = contacts.filter((c) => c.name.toLowerCase().includes(q.toLowerCase())).slice(0, 8);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", border: "1.5px solid #E8DFCE", borderRadius: 8, fontSize: 15, background: sel && !open ? "#F2FBF5" : "#fff", color: "#2B2118", outline: "none", fontWeight: sel && !open ? 700 : 400 }}
+        value={open ? q : sel ? `${sel.name} (${sel.type})` : ""}
+        placeholder={placeholder}
+        onFocus={() => { setOpen(true); setQ(""); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {sel && !open && (
+        <button onMouseDown={(e) => { e.preventDefault(); onChange(""); setQ(""); }}
+          style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", color: "#B3261E", fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
+          ✕
+        </button>
+      )}
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, background: "#fff", border: "1.5px solid #E8DFCE", borderRadius: 8, marginTop: 4, maxHeight: 240, overflowY: "auto", boxShadow: "0 6px 16px rgba(0,0,0,0.12)" }}>
+          {matches.length === 0 && (
+            <div style={{ padding: 12, fontSize: 13.5, color: "#8A7F6F" }}>No match — add this party in the Parties tab first</div>
+          )}
+          {matches.map((c) => (
+            <button key={c.id}
+              onMouseDown={(e) => { e.preventDefault(); onChange(c.id); setOpen(false); setQ(""); }}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", textAlign: "left", padding: "10px 12px", border: "none", borderBottom: "1px solid #F2EDE0", background: "transparent", cursor: "pointer", fontSize: 14.5 }}>
+              <span style={{ fontWeight: 600, color: "#2B2118" }}>{c.name}</span>
+              <span style={{ fontSize: 11, background: c.type === "Broker" ? "#FBEED0" : "#E8F3EC", padding: "2px 8px", borderRadius: 8, fontWeight: 700 }}>{c.type.toUpperCase()}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
