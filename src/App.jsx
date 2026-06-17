@@ -275,6 +275,8 @@ function BrokerDesk({ session }) {
   const [tradeMonth, setTradeMonth] = useState("");
   const [tradeCat, setTradeCat] = useState("");
   const [tradeStatus, setTradeStatus] = useState("");
+  const [posSearch, setPosSearch] = useState("");
+  const [posCat, setPosCat] = useState("");
   const [toast, setToast] = useState("");
   const [syncState, setSyncState] = useState("ok"); // ok | saving | error
   const saveTimer = useRef(null);
@@ -858,10 +860,58 @@ function BrokerDesk({ session }) {
         })()}
 
         {/* ============ POSITION / P&L ============ */}
-        {tab === "position" && (
-          <div>
-            {trades.length === 0 && <Empty text="No trades yet. Positions and P&L will appear here once you enter trades." />}
-            {computePositions(trades, contacts).map(({ contact, rows, totalPL }) => (
+        {tab === "position" && (() => {
+          const cats = [...new Set(trades.map(catOf))].sort((a, b) => {
+            if (a === "Ready") return -1;
+            if (b === "Ready") return 1;
+            const ia = MONTHS.indexOf(a.replace(" Delivery", ""));
+            const ib = MONTHS.indexOf(b.replace(" Delivery", ""));
+            return ia - ib;
+          });
+          const allPos = computePositions(trades, contacts);
+          const filtered = allPos
+            .filter((p) => {
+              if (posCat) {
+                // Filter trades for this position by category
+                const pTrades = trades.filter((t) => (t.buyerId === p.contact.id || t.sellerId === p.contact.id) && catOf(t) === posCat);
+                return pTrades.length > 0;
+              }
+              return true;
+            })
+            .filter((p) => {
+              const q = posSearch.trim().toLowerCase();
+              if (!q) return true;
+              return p.contact.name.toLowerCase().includes(q);
+            })
+            .map((p) => {
+              if (!posCat) return p;
+              // Recompute position for this category only
+              const catTrades = trades.filter((t) => (t.buyerId === p.contact.id || t.sellerId === p.contact.id) && catOf(t) === posCat);
+              const catPos = computePositions(catTrades, [p.contact]);
+              return catPos[0] || p;
+            });
+          return (
+            <div>
+              {/* Search + category filter */}
+              <input
+                style={{ ...inputStyle, marginBottom: 8 }}
+                value={posSearch}
+                onChange={(e) => setPosSearch(e.target.value)}
+                placeholder="🔍 Search party or broker…"
+              />
+              <select style={{ ...inputStyle, marginBottom: 10 }} value={posCat} onChange={(e) => setPosCat(e.target.value)}>
+                <option value="">All categories</option>
+                {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {posCat && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.toorSoft, border: `1.5px solid ${C.toor}`, borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 13 }}>
+                  <span style={{ fontWeight: 700, flex: 1 }}>📊 P&L for {posCat}</span>
+                  <button onClick={() => setPosCat("")} style={{ border: "none", background: "transparent", color: C.maroon, fontWeight: 800, cursor: "pointer" }}>✕</button>
+                </div>
+              )}
+              {trades.length === 0 && <Empty text="No trades yet. Positions and P&L will appear here once you enter trades." />}
+              {trades.length > 0 && filtered.length === 0 && <Empty text={posSearch ? "No party or broker matches your search." : "No positions in this category yet."} />}
+              {filtered.map(({ contact, rows, totalPL }) => (
               <div key={contact.id} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <button onClick={() => { setTradeSearch(contact.name); setTradeMonth(""); setTab("trades"); }}
@@ -899,8 +949,9 @@ function BrokerDesk({ session }) {
                 <b>How to read:</b> LONG = party bought more than sold (holding stock). SHORT = sold more than bought (needs to buy/deliver). P&L is calculated on the matched (bought & sold) quantity at average rates. Rates per 100 kg.
               </div>
             )}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {/* ============ PARTIES ============ */}
         {tab === "parties" && (
