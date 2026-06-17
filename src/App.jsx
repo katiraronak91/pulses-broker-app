@@ -24,6 +24,14 @@ const deliveryText = (t) => {
   return t.deliveryType === CUSTOM_DESC ? (t.customDescription || "—") : (t.deliveryType || "—");
 };
 
+const catOf = (t) => {
+  if (t.tradeMode === "Forward" && t.forwardMonth) return t.forwardMonth + " Delivery";
+  if (t.tradeMode === "Ready" || (t.deliveryType || "").startsWith("Ready")) return "Ready";
+  if (t.tradeMode === "Custom") return "Custom";
+  return "Other";
+};
+
+
 const DEFAULT_PRODUCTS = [
   { name: "Toor", qualities: ["Lemon", "Lincky", "Segain", "Red", "White", "Arusha", "Ghagri", "Mozambique White"] },
   { name: "Urid", qualities: ["FAQ", "SQ", "Brazil"] },
@@ -732,12 +740,6 @@ function BrokerDesk({ session }) {
             return new Date(Number(y), Number(mo) - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
           };
           const q = tradeSearch.trim().toLowerCase();
-          const catOf = (t) => {
-            if (t.tradeMode === "Forward" && t.forwardMonth) return t.forwardMonth + " Delivery";
-            if (t.tradeMode === "Ready" || (t.deliveryType || "").startsWith("Ready")) return "Ready";
-            if (t.tradeMode === "Custom") return "Custom";
-            return "Other";
-          };
           const cats = [...new Set(trades.map(catOf))].sort((a, b) => {
             if (a === "Ready") return -1;
             if (b === "Ready") return 1;
