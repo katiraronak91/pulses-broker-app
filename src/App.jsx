@@ -31,6 +31,33 @@ const catOf = (t) => {
   return "Other";
 };
 
+// Returns the lorry list for a trade. Old trades that used single lorryNo/grossWt/netWt
+// are automatically shown as a one-lorry list so nothing is lost.
+const getLorries = (t) => {
+  if (Array.isArray(t.lorries) && t.lorries.length) return t.lorries;
+  if (t.lorryNo || t.grossWt || t.netWt) return [{ no: t.lorryNo || "", gross: t.grossWt || "", net: t.netWt || "" }];
+  return [];
+};
+const lorryTotals = (list) => list.reduce(
+  (a, l) => ({ gross: a.gross + (Number(l.gross) || 0), net: a.net + (Number(l.net) || 0) }),
+  { gross: 0, net: 0 }
+);
+// Lorry lines for WhatsApp confirmation
+const lorryMsgLines = (t) => {
+  if (t.status !== "Delivered") return [];
+  const ls = getLorries(t);
+  if (!ls.length) return [];
+  const lines = ls.map((l, i) =>
+    `Lorry ${ls.length > 1 ? i + 1 + " " : ""}${l.no || "—"}${l.gross ? ` · Gross ${l.gross} kg` : ""}${l.net ? ` · Net ${l.net} kg` : ""}`
+  );
+  if (ls.length > 1) {
+    const tot = lorryTotals(ls);
+    lines.push(`Total: ${ls.length} lorries · Gross ${tot.gross} kg · Net ${tot.net} kg`);
+  }
+  return lines;
+};
+
+
 
 const DEFAULT_PRODUCTS = [
   { name: "Toor", qualities: ["Lemon", "Lincky", "Segain", "Red", "White", "Arusha", "Ghagri", "Mozambique White"] },
@@ -64,6 +91,7 @@ const emptyTrade = (nextNo, defaultBrokerage) => ({
   lorryNo: "",
   grossWt: "",
   netWt: "",
+  lorries: [],
   squaredWith: "",
   squarePrice: "",
   notes: "",
@@ -157,8 +185,7 @@ function buyerMessage(t, calc, brokerName, contacts = []) {
     `Rate: ₹${t.buyerPrice} per 100 kg`,
     `Delivery: ${deliveryText(t)}`,
     t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
-    t.status === "Delivered" && t.lorryNo ? `Lorry: ${t.lorryNo}` : null,
-    t.status === "Delivered" && (t.grossWt || t.netWt) ? `Weight: ${t.grossWt ? `Gross ${t.grossWt} kg` : ""}${t.grossWt && t.netWt ? " · " : ""}${t.netWt ? `Net ${t.netWt} kg` : ""}` : null,
+    ...lorryMsgLines(t),
     t.status === "Squared Off" ? `Status: SQUARED OFF${(() => { const w = contacts.find((c) => c.id === t.squaredWith)?.name; return w ? ` with ${w}` : ""; })()}${t.squarePrice ? ` @ ₹${t.squarePrice}` : ""} — billing & P/L settlement only` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.buyerBrokerage > 0
@@ -182,8 +209,7 @@ function sellerMessage(t, calc, brokerName, contacts = []) {
     `Rate: ₹${t.sellerPrice} per 100 kg`,
     `Delivery: ${deliveryText(t)}`,
     t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
-    t.status === "Delivered" && t.lorryNo ? `Lorry: ${t.lorryNo}` : null,
-    t.status === "Delivered" && (t.grossWt || t.netWt) ? `Weight: ${t.grossWt ? `Gross ${t.grossWt} kg` : ""}${t.grossWt && t.netWt ? " · " : ""}${t.netWt ? `Net ${t.netWt} kg` : ""}` : null,
+    ...lorryMsgLines(t),
     t.status === "Squared Off" ? `Status: SQUARED OFF${(() => { const w = contacts.find((c) => c.id === t.squaredWith)?.name; return w ? ` with ${w}` : ""; })()}${t.squarePrice ? ` @ ₹${t.squarePrice}` : ""} — billing & P/L settlement only` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.sellerBrokerage > 0
@@ -668,7 +694,7 @@ function BrokerDesk({ session }) {
             <Field label="Trade status / Execution">
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 {["Pending", "Delivered", "Squared Off"].map((s) => (
-                  <button key={s} onClick={() => setTrade({ ...trade, status: s })}
+                  <button key={s} onClick={() => setTrade({ ...trade, status: s, lorries: s === "Delivered" ? (getLorries(trade).length ? getLorries(trade) : [{ no: "", gross: "", net: "" }]) : trade.lorries })}
                     style={{ flex: 1, padding: 10, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13, border: `1.5px solid ${trade.status === s ? (s === "Delivered" ? C.green : s === "Squared Off" ? C.toor : C.maroon) : C.line}`, background: trade.status === s ? (s === "Delivered" ? C.green : s === "Squared Off" ? C.toor : C.maroon) : "#fff", color: trade.status === s ? (s === "Squared Off" ? C.ink : "#fff") : C.ink }}>
                     {s}
                   </button>
@@ -676,21 +702,51 @@ function BrokerDesk({ session }) {
               </div>
               {trade.status === "Delivered" && (
                 <div style={{ background: "#F2FBF5", border: `1.5px solid #D7EEDF`, borderRadius: 8, padding: 10 }}>
-                  <Field label="Lorry number">
-                    <input style={inputStyle} value={trade.lorryNo} onChange={(e) => setTrade({ ...trade, lorryNo: e.target.value })} placeholder="e.g. MH 04 AB 1234" />
-                  </Field>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <div style={{ flex: 1 }}>
-                      <Field label="Gross weight (kg)">
-                        <input type="number" style={inputStyle} value={trade.grossWt} onChange={(e) => setTrade({ ...trade, grossWt: e.target.value })} placeholder="25500" />
+                  <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Lorry details (add one or more)</div>
+
+                  {(trade.lorries || []).map((l, i) => (
+                    <div key={i} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: 12.5, color: C.grey }}>Lorry {i + 1}</span>
+                        <button onClick={() => setTrade({ ...trade, lorries: trade.lorries.filter((_, j) => j !== i) })}
+                          style={{ border: "none", background: "transparent", color: C.red, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>✕ Remove</button>
+                      </div>
+                      <Field label="Lorry number">
+                        <input style={inputStyle} value={l.no}
+                          onChange={(e) => { const ls = [...trade.lorries]; ls[i] = { ...ls[i], no: e.target.value }; setTrade({ ...trade, lorries: ls }); }}
+                          placeholder="e.g. MH 04 AB 1234" />
                       </Field>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <Field label="Gross weight (kg)">
+                            <input type="number" style={inputStyle} value={l.gross}
+                              onChange={(e) => { const ls = [...trade.lorries]; ls[i] = { ...ls[i], gross: e.target.value }; setTrade({ ...trade, lorries: ls }); }}
+                              placeholder="25500" />
+                          </Field>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <Field label="Net weight (kg)">
+                            <input type="number" style={inputStyle} value={l.net}
+                              onChange={(e) => { const ls = [...trade.lorries]; ls[i] = { ...ls[i], net: e.target.value }; setTrade({ ...trade, lorries: ls }); }}
+                              placeholder="25000" />
+                          </Field>
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <Field label="Net weight (kg)">
-                        <input type="number" style={inputStyle} value={trade.netWt} onChange={(e) => setTrade({ ...trade, netWt: e.target.value })} placeholder="25000" />
-                      </Field>
-                    </div>
-                  </div>
+                  ))}
+
+                  <Btn small outline color={C.green} onClick={() => setTrade({ ...trade, lorries: [...getLorries(trade), { no: "", gross: "", net: "" }] })}>
+                    ＋ Add lorry
+                  </Btn>
+
+                  {(trade.lorries || []).length > 0 && (() => {
+                    const tot = lorryTotals(trade.lorries);
+                    return (
+                      <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: C.ink }}>
+                        {trade.lorries.length} lorr{trade.lorries.length > 1 ? "ies" : "y"} · Total Gross {fmt(tot.gross)} kg · Total Net {fmt(tot.net)} kg
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {trade.status === "Squared Off" && (
@@ -830,11 +886,22 @@ function BrokerDesk({ session }) {
                       {tc.seller?.name || "—"} → {tc.buyer?.name || "—"} · {t.qtyMT} MT ({fmt(tc.bags)} bags)
                     </div>
                     <div style={{ fontSize: 13, color: C.grey }}>{deliveryText(t)}{t.deliveryFrom ? ` · From ${t.deliveryFrom}` : ""} · Sell ₹{t.sellerPrice} / Buy ₹{t.buyerPrice} per 100kg</div>
-                    {t.status === "Delivered" && (t.lorryNo || t.grossWt || t.netWt) && (
-                      <div style={{ fontSize: 12.5, color: C.green, marginTop: 2, fontWeight: 600 }}>
-                        🚚 {t.lorryNo ? `Lorry ${t.lorryNo}` : ""}{t.grossWt ? ` · Gross ${fmt(t.grossWt)} kg` : ""}{t.netWt ? ` · Net ${fmt(t.netWt)} kg` : ""}
-                      </div>
-                    )}
+                    {t.status === "Delivered" && getLorries(t).length > 0 && (() => {
+                      const ls = getLorries(t);
+                      const tot = lorryTotals(ls);
+                      return (
+                        <div style={{ fontSize: 12.5, color: C.green, marginTop: 4, fontWeight: 600 }}>
+                          {ls.map((l, i) => (
+                            <div key={i}>🚚 {l.no || `Lorry ${i + 1}`}{l.gross ? ` · Gross ${fmt(l.gross)} kg` : ""}{l.net ? ` · Net ${fmt(l.net)} kg` : ""}</div>
+                          ))}
+                          {ls.length > 1 && (
+                            <div style={{ color: C.ink, fontWeight: 700, marginTop: 2 }}>
+                              Total: {ls.length} lorries · Gross {fmt(tot.gross)} kg · Net {fmt(tot.net)} kg
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {t.status === "Squared Off" && (t.squaredWith || t.squarePrice) && (
                       <div style={{ fontSize: 12.5, color: "#8a6d1a", marginTop: 2, fontWeight: 600 }}>
                         🔁 Squared with {contacts.find((c) => c.id === t.squaredWith)?.name || "—"}{t.squarePrice ? ` @ ₹${t.squarePrice}` : ""}
@@ -842,7 +909,7 @@ function BrokerDesk({ session }) {
                     )}
                     {(t.status || "Pending") === "Pending" && (
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <Btn small color={C.green} onClick={() => { setTrade({ ...t, status: "Delivered" }); setEditingTradeId(t.id); setTab("new"); }}>🚚 Mark Delivered</Btn>
+                        <Btn small color={C.green} onClick={() => { setTrade({ ...t, status: "Delivered", lorries: getLorries(t).length ? getLorries(t) : [{ no: "", gross: "", net: "" }] }); setEditingTradeId(t.id); setTab("new"); }}>🚚 Mark Delivered</Btn>
                         <Btn small color={C.toor} onClick={() => { setTrade({ ...t, status: "Squared Off" }); setEditingTradeId(t.id); setTab("new"); }}>🔁 Square Off</Btn>
                       </div>
                     )}
