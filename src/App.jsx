@@ -7,7 +7,12 @@ const C = {
   paper: "#FBF6EC", card: "#FFFFFF", ink: "#2B2118", maroon: "#7A1F1F",
   maroonDark: "#5E1717", toor: "#E3A82B", toorSoft: "#FBEED0", green: "#1F7A4D",
   wa: "#25D366", line: "#E8DFCE", grey: "#8A7F6F", red: "#B3261E",
+  stock: "#5B8DB8", stockSoft: "#DCEAF5",
 };
+
+const statusColor = (s) =>
+  s === "Delivered" ? C.green : s === "Squared Off" ? C.toor : s === "Stocked" ? C.stock : C.maroon;
+
 
 const READY_OPTIONS = ["Container", "Warehouse", "Next Week"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -48,7 +53,7 @@ const lorryMsgLines = (t) => {
   const ls = getLorries(t);
   if (!ls.length) return [];
   const lines = ls.map((l, i) =>
-    `Lorry ${ls.length > 1 ? i + 1 + " " : ""}${l.no || "—"}${l.gross ? ` · Gross ${l.gross} kg` : ""}${l.net ? ` · Net ${l.net} kg` : ""}`
+    `Lorry ${ls.length > 1 ? i + 1 + " " : ""}${l.no || "—"}${l.gross ? ` · Gross ${l.gross} kg` : ""}${l.net ? ` · Net ${l.net} kg` : ""}${l.split ? ` (${l.split})` : ""}`
   );
   if (ls.length > 1) {
     const tot = lorryTotals(ls);
@@ -94,6 +99,10 @@ const emptyTrade = (nextNo, defaultBrokerage) => ({
   lorries: [],
   squaredWith: "",
   squarePrice: "",
+  stockWarehouse: "",
+  stockMT: "",
+  stockBags: "",
+  stockRemark: "",
   notes: "",
 });
 
@@ -187,6 +196,7 @@ function buyerMessage(t, calc, brokerName, contacts = []) {
     t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
     ...lorryMsgLines(t),
     t.status === "Squared Off" ? `Status: SQUARED OFF${(() => { const w = contacts.find((c) => c.id === t.squaredWith)?.name; return w ? ` with ${w}` : ""; })()}${t.squarePrice ? ` @ ₹${t.squarePrice}` : ""} — billing & P/L settlement only` : null,
+    t.status === "Stocked" ? `Status: STOCKED${t.stockWarehouse ? ` at ${t.stockWarehouse}` : ""}${t.stockMT ? ` · ${t.stockMT} MT` : ""}${t.stockBags ? ` (${t.stockBags} bags)` : ""}${t.stockRemark ? ` · ${t.stockRemark}` : ""}` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.buyerBrokerage > 0
       ? `Brokerage: ₹${t.buyerBrokerage} per bag`
@@ -211,6 +221,7 @@ function sellerMessage(t, calc, brokerName, contacts = []) {
     t.deliveryFrom ? `Delivery from: ${t.deliveryFrom}` : null,
     ...lorryMsgLines(t),
     t.status === "Squared Off" ? `Status: SQUARED OFF${(() => { const w = contacts.find((c) => c.id === t.squaredWith)?.name; return w ? ` with ${w}` : ""; })()}${t.squarePrice ? ` @ ₹${t.squarePrice}` : ""} — billing & P/L settlement only` : null,
+    t.status === "Stocked" ? `Status: STOCKED${t.stockWarehouse ? ` at ${t.stockWarehouse}` : ""}${t.stockMT ? ` · ${t.stockMT} MT` : ""}${t.stockBags ? ` (${t.stockBags} bags)` : ""}${t.stockRemark ? ` · ${t.stockRemark}` : ""}` : null,
     t.paymentCondition ? `Payment: ${t.paymentCondition}` : null,
     calc.sellerBrokerage > 0
       ? `Brokerage: ₹${t.sellerBrokerage} per bag`
@@ -692,61 +703,102 @@ function BrokerDesk({ session }) {
             </Field>
 
             <Field label="Trade status / Execution">
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                {["Pending", "Delivered", "Squared Off"].map((s) => (
-                  <button key={s} onClick={() => setTrade({ ...trade, status: s, lorries: s === "Delivered" ? (getLorries(trade).length ? getLorries(trade) : [{ no: "", gross: "", net: "" }]) : trade.lorries })}
-                    style={{ flex: 1, padding: 10, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13, border: `1.5px solid ${trade.status === s ? (s === "Delivered" ? C.green : s === "Squared Off" ? C.toor : C.maroon) : C.line}`, background: trade.status === s ? (s === "Delivered" ? C.green : s === "Squared Off" ? C.toor : C.maroon) : "#fff", color: trade.status === s ? (s === "Squared Off" ? C.ink : "#fff") : C.ink }}>
-                    {s}
-                  </button>
-                ))}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                {["Pending", "Delivered", "Stocked", "Squared Off"].map((s) => {
+                  const col = statusColor(s);
+                  const active = trade.status === s;
+                  return (
+                    <button key={s} onClick={() => setTrade({ ...trade, status: s, lorries: s === "Delivered" ? (getLorries(trade).length ? getLorries(trade) : [{ no: "", gross: "", net: "" }]) : trade.lorries })}
+                      style={{ padding: 10, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13, border: `1.5px solid ${active ? col : C.line}`, background: active ? col : "#fff", color: active ? (s === "Squared Off" || s === "Stocked" ? C.ink : "#fff") : C.ink }}>
+                      {s}
+                    </button>
+                  );
+                })}
               </div>
-              {trade.status === "Delivered" && (
+              {trade.status === "Delivered" && (() => {
+                const lorries = (trade.lorries && trade.lorries.length) ? trade.lorries : [{ no: "", gross: "", net: "" }];
+                const setLorries = (ls) => setTrade({ ...trade, lorries: ls });
+                return (
                 <div style={{ background: "#F2FBF5", border: `1.5px solid #D7EEDF`, borderRadius: 8, padding: 10 }}>
                   <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Lorry details (add one or more)</div>
 
-                  {(trade.lorries || []).map((l, i) => (
+                  {lorries.map((l, i) => (
                     <div key={i} style={{ background: "#fff", border: `1.5px solid ${C.line}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontWeight: 700, fontSize: 12.5, color: C.grey }}>Lorry {i + 1}</span>
-                        <button onClick={() => setTrade({ ...trade, lorries: trade.lorries.filter((_, j) => j !== i) })}
-                          style={{ border: "none", background: "transparent", color: C.red, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>✕ Remove</button>
+                        {lorries.length > 1 && (
+                          <button onClick={() => setLorries(lorries.filter((_, j) => j !== i))}
+                            style={{ border: "none", background: "transparent", color: C.red, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>✕ Remove</button>
+                        )}
                       </div>
                       <Field label="Lorry number">
-                        <input style={inputStyle} value={l.no}
-                          onChange={(e) => { const ls = [...trade.lorries]; ls[i] = { ...ls[i], no: e.target.value }; setTrade({ ...trade, lorries: ls }); }}
+                        <input style={inputStyle} value={l.no || ""}
+                          onChange={(e) => { const ls = lorries.map((x) => ({ ...x })); ls[i].no = e.target.value; setLorries(ls); }}
                           placeholder="e.g. MH 04 AB 1234" />
                       </Field>
                       <div style={{ display: "flex", gap: 10 }}>
                         <div style={{ flex: 1 }}>
                           <Field label="Gross weight (kg)">
-                            <input type="number" style={inputStyle} value={l.gross}
-                              onChange={(e) => { const ls = [...trade.lorries]; ls[i] = { ...ls[i], gross: e.target.value }; setTrade({ ...trade, lorries: ls }); }}
+                            <input type="number" style={inputStyle} value={l.gross || ""}
+                              onChange={(e) => { const ls = lorries.map((x) => ({ ...x })); ls[i].gross = e.target.value; setLorries(ls); }}
                               placeholder="25500" />
                           </Field>
                         </div>
                         <div style={{ flex: 1 }}>
                           <Field label="Net weight (kg)">
-                            <input type="number" style={inputStyle} value={l.net}
-                              onChange={(e) => { const ls = [...trade.lorries]; ls[i] = { ...ls[i], net: e.target.value }; setTrade({ ...trade, lorries: ls }); }}
+                            <input type="number" style={inputStyle} value={l.net || ""}
+                              onChange={(e) => { const ls = lorries.map((x) => ({ ...x })); ls[i].net = e.target.value; setLorries(ls); }}
                               placeholder="25000" />
                           </Field>
                         </div>
                       </div>
+                      <Field label="Split / shared note (optional)">
+                        <input style={inputStyle} value={l.split || ""}
+                          onChange={(e) => { const ls = lorries.map((x) => ({ ...x })); ls[i].split = e.target.value; setLorries(ls); }}
+                          placeholder="e.g. 10 MT this trade + 25 MT of Trade #14 @7675" />
+                      </Field>
                     </div>
                   ))}
 
-                  <Btn small outline color={C.green} onClick={() => setTrade({ ...trade, lorries: [...getLorries(trade), { no: "", gross: "", net: "" }] })}>
+                  <Btn small outline color={C.green} onClick={() => setLorries([...lorries, { no: "", gross: "", net: "" }])}>
                     ＋ Add lorry
                   </Btn>
 
-                  {(trade.lorries || []).length > 0 && (() => {
-                    const tot = lorryTotals(trade.lorries);
+                  {(() => {
+                    const tot = lorryTotals(lorries);
                     return (
                       <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: C.ink }}>
-                        {trade.lorries.length} lorr{trade.lorries.length > 1 ? "ies" : "y"} · Total Gross {fmt(tot.gross)} kg · Total Net {fmt(tot.net)} kg
+                        {lorries.length} lorr{lorries.length > 1 ? "ies" : "y"} · Total Gross {fmt(tot.gross)} kg · Total Net {fmt(tot.net)} kg
                       </div>
                     );
                   })()}
+                </div>
+                );
+              })()}
+              {trade.status === "Stocked" && (
+                <div style={{ background: C.stockSoft, border: `1.5px solid ${C.stock}`, borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Warehouse stock details</div>
+                  <Field label="Warehouse name / location">
+                    <input style={inputStyle} value={trade.stockWarehouse} onChange={(e) => setTrade({ ...trade, stockWarehouse: e.target.value })} placeholder="e.g. Sharma Warehouse, Vashi" />
+                  </Field>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <Field label="Quantity (MT)">
+                        <input type="number" style={inputStyle} value={trade.stockMT}
+                          onChange={(e) => { const mt = e.target.value; setTrade({ ...trade, stockMT: mt, stockBags: mt ? String(Math.round(Number(mt) * 20)) : "" }); }}
+                          placeholder="25" />
+                      </Field>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Field label="Bags">
+                        <input type="number" style={inputStyle} value={trade.stockBags} onChange={(e) => setTrade({ ...trade, stockBags: e.target.value })} placeholder="500" />
+                      </Field>
+                    </div>
+                  </div>
+                  <Field label="Remark (optional)">
+                    <input style={inputStyle} value={trade.stockRemark} onChange={(e) => setTrade({ ...trade, stockRemark: e.target.value })} placeholder="e.g. balance 25 MT stocked, rest dispatched" />
+                  </Field>
+                  <div style={{ fontSize: 12, color: C.grey }}>1 MT = 20 bags. Bags auto-fill from MT, you can adjust.</div>
                 </div>
               )}
               {trade.status === "Squared Off" && (
@@ -819,7 +871,7 @@ function BrokerDesk({ session }) {
               );
             });
           const statusOf = (t) => t.status || "Pending";
-          const counts = { Pending: 0, Delivered: 0, "Squared Off": 0 };
+          const counts = { Pending: 0, Delivered: 0, Stocked: 0, "Squared Off": 0 };
           baseFiltered.forEach((t) => { counts[statusOf(t)] = (counts[statusOf(t)] || 0) + 1; });
           const filtered = baseFiltered
             .filter((t) => !tradeStatus || statusOf(t) === tradeStatus)
@@ -847,10 +899,10 @@ function BrokerDesk({ session }) {
               </div>
               {/* Status chips */}
               <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-                {["", "Pending", "Delivered", "Squared Off"].map((s) => {
+                {["", "Pending", "Delivered", "Stocked", "Squared Off"].map((s) => {
                   const active = tradeStatus === s;
                   const label = s === "" ? `All (${baseFiltered.length})` : `${s} (${counts[s] || 0})`;
-                  const col = s === "Delivered" ? C.green : s === "Squared Off" ? "#8a6d1a" : s === "Pending" ? C.red : C.maroon;
+                  const col = s === "Delivered" ? C.green : s === "Squared Off" ? "#8a6d1a" : s === "Stocked" ? C.stock : s === "Pending" ? C.red : C.maroon;
                   return (
                     <button key={s || "all"} onClick={() => setTradeStatus(s)}
                       style={{ padding: "6px 12px", borderRadius: 14, fontWeight: 700, cursor: "pointer", fontSize: 12.5, border: `1.5px solid ${active ? col : C.line}`, background: active ? col : "#fff", color: active ? "#fff" : C.ink }}>
@@ -878,7 +930,7 @@ function BrokerDesk({ session }) {
                       <div style={{ fontSize: 12, color: C.grey }}>{t.date}</div>
                     </div>
                     <div style={{ marginTop: 4 }}>
-                      <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 8, background: t.status === "Delivered" ? "#E8F3EC" : t.status === "Squared Off" ? C.toorSoft : "#F2EDE0", color: t.status === "Delivered" ? C.green : t.status === "Squared Off" ? "#8a6d1a" : C.grey }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 8, background: t.status === "Delivered" ? "#E8F3EC" : t.status === "Squared Off" ? C.toorSoft : t.status === "Stocked" ? C.stockSoft : "#F2EDE0", color: t.status === "Delivered" ? C.green : t.status === "Squared Off" ? "#8a6d1a" : t.status === "Stocked" ? "#2f5d80" : C.grey }}>
                         {(t.status || "Pending").toUpperCase()}
                       </span>
                     </div>
@@ -892,7 +944,7 @@ function BrokerDesk({ session }) {
                       return (
                         <div style={{ fontSize: 12.5, color: C.green, marginTop: 4, fontWeight: 600 }}>
                           {ls.map((l, i) => (
-                            <div key={i}>🚚 {l.no || `Lorry ${i + 1}`}{l.gross ? ` · Gross ${fmt(l.gross)} kg` : ""}{l.net ? ` · Net ${fmt(l.net)} kg` : ""}</div>
+                            <div key={i}>🚚 {l.no || `Lorry ${i + 1}`}{l.gross ? ` · Gross ${fmt(l.gross)} kg` : ""}{l.net ? ` · Net ${fmt(l.net)} kg` : ""}{l.split ? ` · ${l.split}` : ""}</div>
                           ))}
                           {ls.length > 1 && (
                             <div style={{ color: C.ink, fontWeight: 700, marginTop: 2 }}>
@@ -907,9 +959,15 @@ function BrokerDesk({ session }) {
                         🔁 Squared with {contacts.find((c) => c.id === t.squaredWith)?.name || "—"}{t.squarePrice ? ` @ ₹${t.squarePrice}` : ""}
                       </div>
                     )}
+                    {t.status === "Stocked" && (t.stockWarehouse || t.stockMT) && (
+                      <div style={{ fontSize: 12.5, color: "#2f5d80", marginTop: 2, fontWeight: 600 }}>
+                        📦 Stocked{t.stockWarehouse ? ` at ${t.stockWarehouse}` : ""}{t.stockMT ? ` · ${fmt(t.stockMT)} MT` : ""}{t.stockBags ? ` (${fmt(t.stockBags)} bags)` : ""}{t.stockRemark ? ` · ${t.stockRemark}` : ""}
+                      </div>
+                    )}
                     {(t.status || "Pending") === "Pending" && (
-                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                         <Btn small color={C.green} onClick={() => { setTrade({ ...t, status: "Delivered", lorries: getLorries(t).length ? getLorries(t) : [{ no: "", gross: "", net: "" }] }); setEditingTradeId(t.id); setTab("new"); }}>🚚 Mark Delivered</Btn>
+                        <Btn small color={C.stock} onClick={() => { setTrade({ ...t, status: "Stocked" }); setEditingTradeId(t.id); setTab("new"); }}>📦 Stock</Btn>
                         <Btn small color={C.toor} onClick={() => { setTrade({ ...t, status: "Squared Off" }); setEditingTradeId(t.id); setTab("new"); }}>🔁 Square Off</Btn>
                       </div>
                     )}
